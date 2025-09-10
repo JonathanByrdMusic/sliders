@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Three Horizontal Sliders</title>
+    <style>
+      /* ——— Basic, above‑the‑fold layout ——— */
+      :root{
+        --gap: 1rem;
+        --track-h: 6px;
+        --thumb: 18px;
+      }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        display: grid;
+        place-items: start center; /* keep content visible without scrolling */
+        background: #f7f7f8;
+        color: #111;
+      }
+      .wrap {
+        width: min(900px, 92vw);
+        margin-top: 6vh; /* comfortably above the fold */
+      }
+      h1 { font-size: 1.25rem; margin: 0 0 var(--gap) 0; }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: var(--gap);
+        margin: calc(var(--gap) * 1.0) 0;
+      }
+      label { width: 7ch; font-weight: 600; }
+      output { width: 5ch; text-align: right; }
+      input[type="range"] {
+        flex: 1;
+        appearance: none;
+        height: var(--track-h);
+        border-radius: 999px;
+        background: #ddd;
+        outline: none;
+      }
+      /* Chrome/Safari */
+      input[type="range"]::-webkit-slider-thumb {
+        appearance: none;
+        width: var(--thumb);
+        height: var(--thumb);
+        border-radius: 50%;
+        background: #111;
+        cursor: pointer;
+        margin-top: calc((var(--track-h) - var(--thumb)) / 2);
+      }
+      /* Firefox */
+      input[type="range"]::-moz-range-thumb {
+        width: var(--thumb);
+        height: var(--thumb);
+        border: none;
+        border-radius: 50%;
+        background: #111;
+        cursor: pointer;
+      }
+      input[type="range"]::-moz-range-track { height: var(--track-h); background: #ddd; border: none; }
+
+      /* Optional: subtle focus ring for accessibility */
+      input[type="range"]:focus-visible { outline: 2px solid #5b9cff; outline-offset: 6px; }
+      
+      /* Dark mode */
+      @media (prefers-color-scheme: dark) {
+        body { background: #0b0b0d; color: #eaeaea; }
+        input[type="range"] { background: #2a2a2e; }
+        input[type="range"]::-webkit-slider-thumb { background: #eaeaea; }
+        input[type="range"]::-moz-range-thumb { background: #eaeaea; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap" aria-label="Above the fold sliders">
+      <h1>Three horizontal sliders</h1>
+
+      <div class="row">
+        <label for="s1">Slider 1</label>
+        <input id="s1" type="range" min="0" max="200" step="1" value="100" />
+        <output id="o1" for="s1">100</output>
+      </div>
+
+      <div class="row">
+        <label for="s2">Slider 2</label>
+        <input id="s2" type="range" min="0" max="200" step="1" value="80" />
+        <output id="o2" for="s2">80</output>
+      </div>
+
+      <div class="row">
+        <label for="s3">Slider 3</label>
+        <input id="s3" type="range" min="0" max="200" step="1" value="40" />
+        <output id="o3" for="s3">40</output>
+      </div>
+    </main>
+
+    <script>
+      // Bare-bones JS to mirror values into <output>
+      const hookup = (idIn, idOut) => {
+        const input = document.getElementById(idIn);
+        const out   = document.getElementById(idOut);
+        const sync  = () => (out.textContent = input.value);
+        input.addEventListener('input', sync);
+        input.addEventListener('change', sync);
+      };
+      hookup('s1', 'o1');
+      hookup('s2', 'o2');
+      hookup('s3', 'o3');
+    </script>
+  </body>
+</html>
