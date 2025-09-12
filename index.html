@@ -209,6 +209,19 @@
     if (!ctx) setupGraph();
     await unlockAudio();
     if (ctx.state !== 'running') await ctx.resume();
+
+      // 🔊 Debug: add a simple test oscillator directly to speakers
+  const testOsc = ctx.createOscillator();
+  testOsc.type = "sine";
+  testOsc.frequency.value = 440;       // A4
+  testOsc.connect(ctx.destination);
+  testOsc.start();
+
+  // keep your slider updates
+  updateMorph(+sMorph.value);
+  updateHarmonics(+sHarm.value);
+  updateReverb(+sVerb.value);
+};
     startSourcesIfNeeded();
     updateMorph(+sMorph.value);
     updateHarmonics(+sHarm.value);
