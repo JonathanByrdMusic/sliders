@@ -57,140 +57,177 @@
   </main>
 
   <script>
-    // ====== Web Audio setup ======
-    let ctx, master, dryGain, wetGain, reverb, 
-        sinOsc, sawOsc, gainSine, gainSaw,
-        harmonics = [], harmonicGains = [];
+  // ====== Globals ======
+  let ctx, master, dryGain, wetGain, reverb,
+      sinOsc, sawOsc, gainSine, gainSaw,
+      harmonics = [], harmonicGains = [];
+  const BASE_FREQ = 220;
+  const NUM_HARMONICS_MAX = 10;
 
-    const BASE_FREQ = 220;         // A3
-    const NUM_HARMONICS_MAX = 10;  // how many overtones to support
+  // --- iOS unlock: prime the audio hardware with a tiny silent buffer ---
+  async function unlockAudio() {
+    if (!ctx) return;
+    if (ctx.state === 'running') return;
+    try {
+      const buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      src.connect(ctx.destination);
+      src.start(0);
+      await ctx.resume();
+    } catch (e) {
+      // ignore
+    }
+  }
 
-    function createReverbImpulse(context, seconds = 2.0, decay = 3.0) {
-      // simple exponentially-decaying white-noise impulse
-      const rate = context.sampleRate;
-      const length = Math.max(1, Math.floor(seconds * rate));
-      const impulse = context.createBuffer(2, length, rate);
-      for (let ch = 0; ch < 2; ch++) {
-        const data = impulse.getChannelData(ch);
-        for (let i = 0; i < length; i++) {
-          const t = i / length;
-          data[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, decay);
-        }
-      }
-      return impulse;
+  // --- Build the node graph (no oscillators started yet) ---
+  function setupGraph() {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+    master  = ctx.createGain(); master.gain.value = 0.25;
+    dryGain = ctx.createGain(); wetGain = ctx.createGain();
+    dryGain.gain.value = 1.0;   wetGain.gain.value = 0.0;
+
+    reverb = ctx.createConvolver();
+    reverb.buffer = createReverbImpulse(ctx, 2.2, 4.0);
+
+    // these gains will host the morphing sources
+    gainSine = ctx.createGain(); gainSine.gain.value = 0.0;
+    gainSaw  = ctx.createGain(); gainSaw.gain.value  = 1.0;
+
+    // Harmonic gains
+    for (let k = 2; k <= NUM_HARMONICS_MAX + 1; k++) {
+      const g = ctx.createGain();
+      g.gain.value = 0.0;
+      harmonicGains.push(g);
     }
 
-    function setupGraph() {
-      ctx = new (window.AudioContext || window.webkitAudioContext)();
+    // Sum -> dry/wet -> master -> destination
+    const drySum = ctx.createGain();
+    gainSine.connect(drySum);
+    gainSaw.connect(drySum);
+    harmonicGains.forEach(g => g.connect(drySum));
 
-      // Master routing
-      master  = ctx.createGain(); master.gain.value = 0.25; // overall level
-      dryGain = ctx.createGain(); wetGain = ctx.createGain();
-      dryGain.gain.value = 1.0;   wetGain.gain.value = 0.0;  // start fully dry
+    drySum.connect(dryGain);
+    drySum.connect(reverb);
+    reverb.connect(wetGain);
 
-      // Convolver (reverb)
-      reverb = ctx.createConvolver();
-      reverb.buffer = createReverbImpulse(ctx, 2.2, 4.0);
+    dryGain.connect(master);
+    wetGain.connect(master);
+    master.connect(ctx.destination);
+  }
 
-      // Two oscillators for morph: sine & sawtooth → equal‑power crossfade
-      sinOsc  = ctx.createOscillator(); sinOsc.type = 'sine';  sinOsc.frequency.value = BASE_FREQ;
-      sawOsc  = ctx.createOscillator(); sawOsc.type = 'sawtooth'; sawOsc.frequency.value = BASE_FREQ;
-      gainSine = ctx.createGain(); gainSine.gain.value = 0.0; // left side = saw
-      gainSaw  = ctx.createGain(); gainSaw.gain.value  = 1.0;
+  // --- Create and start sources AFTER context is running (iOS-friendly) ---
+  function startSourcesIfNeeded() {
+    if (sinOsc) return; // already started
 
-      sinOsc.connect(gainSine); sawOsc.connect(gainSaw);
+    sinOsc = ctx.createOscillator();
+    sinOsc.type = 'sine';
+    sinOsc.frequency.value = BASE_FREQ;
+    sinOsc.connect(gainSine);
 
-      // Harmonic bank (2x..(N)x fundamental)
-      for (let k = 2; k <= NUM_HARMONICS_MAX + 1; k++) {
-        const o = ctx.createOscillator();
-        o.type = 'sine';
-        o.frequency.value = BASE_FREQ * k; // integer harmonics
-        const g = ctx.createGain();
-        g.gain.value = 0.0; // off by default
-        o.connect(g);
-        harmonics.push(o); harmonicGains.push(g);
-      }
+    sawOsc = ctx.createOscillator();
+    sawOsc.type = 'sawtooth';
+    sawOsc.frequency.value = BASE_FREQ;
+    sawOsc.connect(gainSaw);
 
-      // Mix dry path (fundamental + harmonics)
-      const drySum = ctx.createGain();
-      gainSine.connect(drySum); gainSaw.connect(drySum);
-      harmonicGains.forEach(g => g.connect(drySum));
-      drySum.connect(dryGain);
-
-      // Wet path
-      drySum.connect(reverb); reverb.connect(wetGain);
-
-      // To destination
-      dryGain.connect(master); wetGain.connect(master); master.connect(ctx.destination);
-
-      // Start oscillators
-      sinOsc.start(); sawOsc.start(); harmonics.forEach(o => o.start());
+    harmonics = [];
+    for (let k = 2; k <= NUM_HARMONICS_MAX + 1; k++) {
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = BASE_FREQ * k;
+      o.connect(harmonicGains[k - 2]);
+      harmonics.push(o);
     }
 
-    // ====== UI wiring ======
-    const sMorph = document.getElementById('sMorph');
-    const sHarm  = document.getElementById('sHarm');
-    const sVerb  = document.getElementById('sVerb');
-    const oMorph = document.getElementById('oMorph');
-    const oHarm  = document.getElementById('oHarm');
-    const oVerb  = document.getElementById('oVerb');
+    sinOsc.start();
+    sawOsc.start();
+    harmonics.forEach(o => o.start());
+  }
 
-    function updateMorph(v) {
-      // map 0..200 → 0..1, equal‑power crossfade to keep loudness steady
-      const x = Math.max(0, Math.min(1, v / 200));
-      const sine = Math.sin(0.5 * Math.PI * x);
-      const saw  = Math.cos(0.5 * Math.PI * x);
-      if (gainSine && gainSaw) {
-        const t = ctx.currentTime;
-        gainSine.gain.setTargetAtTime(sine, t, 0.01);
-        gainSaw.gain.setTargetAtTime(saw,  t, 0.01);
+  // --- Reverb impulse (same as before) ---
+  function createReverbImpulse(context, seconds = 2.0, decay = 3.0) {
+    const rate = context.sampleRate;
+    const length = Math.max(1, Math.floor(seconds * rate));
+    const impulse = context.createBuffer(2, length, rate);
+    for (let ch = 0; ch < 2; ch++) {
+      const data = impulse.getChannelData(ch);
+      for (let i = 0; i < length; i++) {
+        const t = i / length;
+        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, decay);
       }
-      oMorph.textContent = (x * 100).toFixed(0) + '%';
     }
+    return impulse;
+  }
 
-    function updateHarmonics(v) {
-      // 0..200 → 0..10 harmonics
-      const n = Math.round((v / 200) * NUM_HARMONICS_MAX);
-      oHarm.textContent = String(n);
-      if (!harmonicGains.length) return;
+  // ====== UI wiring & parameter updates (unchanged logic) ======
+  const sMorph = document.getElementById('sMorph');
+  const sHarm  = document.getElementById('sHarm');
+  const sVerb  = document.getElementById('sVerb');
+  const oMorph = document.getElementById('oMorph');
+  const oHarm  = document.getElementById('oHarm');
+  const oVerb  = document.getElementById('oVerb');
+
+  function updateMorph(v) {
+    const x = Math.max(0, Math.min(1, v / 200));
+    const sine = Math.sin(0.5 * Math.PI * x);
+    const saw  = Math.cos(0.5 * Math.PI * x);
+    if (gainSine && gainSaw) {
       const t = ctx.currentTime;
-      harmonicGains.forEach((g, i) => {
-        const k = i + 2; // harmonic number (2..)
-        // amplitude ~ 1/k to mimic saw-ish spectrum when fully on
-        const target = (i < n) ? (0.25 / k) : 0.0;
-        g.gain.setTargetAtTime(target, t, 0.02);
-      });
+      gainSine.gain.setTargetAtTime(sine, t, 0.01);
+      gainSaw.gain.setTargetAtTime(saw,  t, 0.01);
     }
+    oMorph.textContent = (x * 100).toFixed(0) + '%';
+  }
 
-    function updateReverb(v) {
-      // wet/dry equal‑power mix
-      const x = Math.max(0, Math.min(1, v / 200));
-      const wet = Math.sin(0.5 * Math.PI * x);
-      const dry = Math.cos(0.5 * Math.PI * x);
-      const t = ctx.currentTime;
-      wetGain.gain.setTargetAtTime(wet, t, 0.02);
-      dryGain.gain.setTargetAtTime(dry, t, 0.02);
-      oVerb.textContent = Math.round(x * 100) + '%';
-    }
-
-    // Hook up sliders
-    sMorph.addEventListener('input', e => updateMorph(+e.target.value));
-    sHarm.addEventListener('input',  e => updateHarmonics(+e.target.value));
-    sVerb.addEventListener('input',  e => updateReverb(+e.target.value));
-
-    // Start/Stop
-    document.getElementById('startBtn').addEventListener('click', async () => {
-      if (!ctx) setupGraph();
-      if (ctx.state !== 'running') await ctx.resume();
-      // initialize from current slider positions
-      updateMorph(+sMorph.value);
-      updateHarmonics(+sHarm.value);
-      updateReverb(+sVerb.value);
+  function updateHarmonics(v) {
+    const n = Math.round((v / 200) * NUM_HARMONICS_MAX);
+    oHarm.textContent = String(n);
+    if (!harmonicGains.length) return;
+    const t = ctx.currentTime;
+    harmonicGains.forEach((g, i) => {
+      const k = i + 2;
+      const target = (i < n) ? (0.25 / k) : 0.0;
+      g.gain.setTargetAtTime(target, t, 0.02);
     });
+  }
 
-    document.getElementById('stopBtn').addEventListener('click', async () => {
-      if (ctx && ctx.state === 'running') await ctx.suspend();
-    });
-  </script>
+  function updateReverb(v) {
+    const x = Math.max(0, Math.min(1, v / 200));
+    const wet = Math.sin(0.5 * Math.PI * x);
+    const dry = Math.cos(0.5 * Math.PI * x);
+    const t = ctx.currentTime;
+    wetGain.gain.setTargetAtTime(wet, t, 0.02);
+    dryGain.gain.setTargetAtTime(dry, t, 0.02);
+    oVerb.textContent = Math.round(x * 100) + '%';
+  }
+
+  sMorph.addEventListener('input', e => updateMorph(+e.target.value));
+  sHarm.addEventListener('input',  e => updateHarmonics(+e.target.value));
+  sVerb.addEventListener('input',  e => updateReverb(+e.target.value));
+
+  const start = async () => {
+    if (!ctx) setupGraph();
+    await unlockAudio();          // <- important on iOS
+    if (ctx.state !== 'running') await ctx.resume();
+    startSourcesIfNeeded();       // <- start oscillators now that audio is running
+    // sync params to current sliders
+    updateMorph(+sMorph.value);
+    updateHarmonics(+sHarm.value);
+    updateReverb(+sVerb.value);
+  };
+
+  const stop = async () => {
+    if (ctx && ctx.state === 'running') await ctx.suspend();
+  };
+
+  // Buttons + iOS touchstart
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn  = document.getElementById('stopBtn');
+  startBtn.addEventListener('click', start);
+  startBtn.addEventListener('touchstart', (e) => { e.preventDefault(); start(); }, {passive:false});
+  stopBtn.addEventListener('click', stop);
+  stopBtn.addEventListener('touchstart', (e) => { e.preventDefault(); stop(); }, {passive:false});
+</script>
 </body>
 </html>
