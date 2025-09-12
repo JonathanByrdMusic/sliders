@@ -1,114 +1,196 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Three Horizontal Sliders</title>
-    <style>
-      /* ——— Basic, above‑the‑fold layout ——— */
-      :root{
-        --gap: 1rem;
-        --track-h: 6px;
-        --thumb: 18px;
-      }
-      html, body { height: 100%; }
-      body {
-        margin: 0;
-        font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-        display: grid;
-        place-items: start center; /* keep content visible without scrolling */
-        background: #f7f7f8;
-        color: #111;
-      }
-      .wrap {
-        width: min(900px, 92vw);
-        margin-top: 6vh; /* comfortably above the fold */
-      }
-      h1 { font-size: 1.25rem; margin: 0 0 var(--gap) 0; }
-      .row {
-        display: flex;
-        align-items: center;
-        gap: var(--gap);
-        margin: calc(var(--gap) * 1.0) 0;
-      }
-      label { width: 7ch; font-weight: 600; }
-      output { width: 5ch; text-align: right; }
-      input[type="range"] {
-        flex: 1;
-        appearance: none;
-        height: var(--track-h);
-        border-radius: 999px;
-        background: #ddd;
-        outline: none;
-      }
-      /* Chrome/Safari */
-      input[type="range"]::-webkit-slider-thumb {
-        appearance: none;
-        width: var(--thumb);
-        height: var(--thumb);
-        border-radius: 50%;
-        background: #111;
-        cursor: pointer;
-        margin-top: calc((var(--track-h) - var(--thumb)) / 2);
-      }
-      /* Firefox */
-      input[type="range"]::-moz-range-thumb {
-        width: var(--thumb);
-        height: var(--thumb);
-        border: none;
-        border-radius: 50%;
-        background: #111;
-        cursor: pointer;
-      }
-      input[type="range"]::-moz-range-track { height: var(--track-h); background: #ddd; border: none; }
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Three Sliders · Web Audio</title>
+  <style>
+    :root { --gap: 1rem; --track-h: 6px; --thumb: 18px; }
+    html, body { height: 100%; }
+    body {
+      margin: 0; font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      display: grid; place-items: start center; background:#0b0b0d; color:#eaeaea;
+    }
+    .wrap { width: min(900px, 92vw); margin-top: 5vh; }
+    h1 { font-size: 1.25rem; margin: 0 0 var(--gap); }
+    .row { display:flex; align-items:center; gap:var(--gap); margin: calc(var(--gap) * 1.0) 0; }
+    label { width: 16ch; font-weight: 600; }
+    output { width: 6ch; text-align: right; }
+    input[type="range"]{ flex:1; appearance:none; height:var(--track-h); border-radius:999px; background:#2a2a2e; outline:none; }
+    input[type="range"]::-webkit-slider-thumb{ appearance:none; width:var(--thumb); height:var(--thumb); border-radius:50%; background:#eaeaea; cursor:pointer; margin-top: calc((var(--track-h) - var(--thumb)) / 2); }
+    input[type="range"]::-moz-range-thumb{ width:var(--thumb); height:var(--thumb); border:none; border-radius:50%; background:#eaeaea; cursor:pointer; }
+    input[type="range"]::-moz-range-track{ height:var(--track-h); background:#2a2a2e; border:none; }
+    .controls { display:flex; gap:.75rem; flex-wrap:wrap; margin: .5rem 0 1rem; }
+    button { cursor:pointer; border:0; padding:.6rem .9rem; border-radius:.8rem; background:#eaeaea; color:#0b0b0d; font-weight:600; }
+    button.secondary { background:#2a2a2e; color:#eaeaea; }
+    .note { opacity:.8; font-size:.9rem; }
+  </style>
+</head>
+<body>
+  <main class="wrap" aria-label="Above the fold sliders controlling audio">
+    <h1>Three sliders controlling a Web Audio tone</h1>
 
-      /* Optional: subtle focus ring for accessibility */
-      input[type="range"]:focus-visible { outline: 2px solid #5b9cff; outline-offset: 6px; }
-      
-      /* Dark mode */
-      @media (prefers-color-scheme: dark) {
-        body { background: #0b0b0d; color: #eaeaea; }
-        input[type="range"] { background: #2a2a2e; }
-        input[type="range"]::-webkit-slider-thumb { background: #eaeaea; }
-        input[type="range"]::-moz-range-thumb { background: #eaeaea; }
+    <div class="controls">
+      <button id="startBtn">Start tone</button>
+      <button id="stopBtn" class="secondary">Stop</button>
+    </div>
+
+    <div class="row">
+      <label for="sMorph">Wave morph (saw → sine)</label>
+      <input id="sMorph" type="range" min="0" max="200" step="1" value="0" />
+      <output id="oMorph">0</output>
+    </div>
+
+    <div class="row">
+      <label for="sHarm">Harmonics (0 → 10)</label>
+      <input id="sHarm" type="range" min="0" max="200" step="1" value="20" />
+      <output id="oHarm">1</output>
+    </div>
+
+    <div class="row">
+      <label for="sVerb">Reverb mix (dry → wet)</label>
+      <input id="sVerb" type="range" min="0" max="200" step="1" value="0" />
+      <output id="oVerb">0%</output>
+    </div>
+
+    <p class="note">Tip: If you don't hear sound, click <strong>Start tone</strong> first—browsers require a user gesture to begin audio.</p>
+  </main>
+
+  <script>
+    // ====== Web Audio setup ======
+    let ctx, master, dryGain, wetGain, reverb, 
+        sinOsc, sawOsc, gainSine, gainSaw,
+        harmonics = [], harmonicGains = [];
+
+    const BASE_FREQ = 220;         // A3
+    const NUM_HARMONICS_MAX = 10;  // how many overtones to support
+
+    function createReverbImpulse(context, seconds = 2.0, decay = 3.0) {
+      // simple exponentially-decaying white-noise impulse
+      const rate = context.sampleRate;
+      const length = Math.max(1, Math.floor(seconds * rate));
+      const impulse = context.createBuffer(2, length, rate);
+      for (let ch = 0; ch < 2; ch++) {
+        const data = impulse.getChannelData(ch);
+        for (let i = 0; i < length; i++) {
+          const t = i / length;
+          data[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, decay);
+        }
       }
-    </style>
-  </head>
-  <body>
-    <main class="wrap" aria-label="Above the fold sliders">
-      <h1>Three horizontal sliders</h1>
+      return impulse;
+    }
 
-      <div class="row">
-        <label for="s1">Slider 1</label>
-        <input id="s1" type="range" min="0" max="200" step="1" value="100" />
-        <output id="o1" for="s1">100</output>
-      </div>
+    function setupGraph() {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
 
-      <div class="row">
-        <label for="s2">Slider 2</label>
-        <input id="s2" type="range" min="0" max="200" step="1" value="80" />
-        <output id="o2" for="s2">80</output>
-      </div>
+      // Master routing
+      master  = ctx.createGain(); master.gain.value = 0.25; // overall level
+      dryGain = ctx.createGain(); wetGain = ctx.createGain();
+      dryGain.gain.value = 1.0;   wetGain.gain.value = 0.0;  // start fully dry
 
-      <div class="row">
-        <label for="s3">Slider 3</label>
-        <input id="s3" type="range" min="0" max="200" step="1" value="40" />
-        <output id="o3" for="s3">40</output>
-      </div>
-    </main>
+      // Convolver (reverb)
+      reverb = ctx.createConvolver();
+      reverb.buffer = createReverbImpulse(ctx, 2.2, 4.0);
 
-    <script>
-      // Bare-bones JS to mirror values into <output>
-      const hookup = (idIn, idOut) => {
-        const input = document.getElementById(idIn);
-        const out   = document.getElementById(idOut);
-        const sync  = () => (out.textContent = input.value);
-        input.addEventListener('input', sync);
-        input.addEventListener('change', sync);
-      };
-      hookup('s1', 'o1');
-      hookup('s2', 'o2');
-      hookup('s3', 'o3');
-    </script>
-  </body>
+      // Two oscillators for morph: sine & sawtooth → equal‑power crossfade
+      sinOsc  = ctx.createOscillator(); sinOsc.type = 'sine';  sinOsc.frequency.value = BASE_FREQ;
+      sawOsc  = ctx.createOscillator(); sawOsc.type = 'sawtooth'; sawOsc.frequency.value = BASE_FREQ;
+      gainSine = ctx.createGain(); gainSine.gain.value = 0.0; // left side = saw
+      gainSaw  = ctx.createGain(); gainSaw.gain.value  = 1.0;
+
+      sinOsc.connect(gainSine); sawOsc.connect(gainSaw);
+
+      // Harmonic bank (2x..(N)x fundamental)
+      for (let k = 2; k <= NUM_HARMONICS_MAX + 1; k++) {
+        const o = ctx.createOscillator();
+        o.type = 'sine';
+        o.frequency.value = BASE_FREQ * k; // integer harmonics
+        const g = ctx.createGain();
+        g.gain.value = 0.0; // off by default
+        o.connect(g);
+        harmonics.push(o); harmonicGains.push(g);
+      }
+
+      // Mix dry path (fundamental + harmonics)
+      const drySum = ctx.createGain();
+      gainSine.connect(drySum); gainSaw.connect(drySum);
+      harmonicGains.forEach(g => g.connect(drySum));
+      drySum.connect(dryGain);
+
+      // Wet path
+      drySum.connect(reverb); reverb.connect(wetGain);
+
+      // To destination
+      dryGain.connect(master); wetGain.connect(master); master.connect(ctx.destination);
+
+      // Start oscillators
+      sinOsc.start(); sawOsc.start(); harmonics.forEach(o => o.start());
+    }
+
+    // ====== UI wiring ======
+    const sMorph = document.getElementById('sMorph');
+    const sHarm  = document.getElementById('sHarm');
+    const sVerb  = document.getElementById('sVerb');
+    const oMorph = document.getElementById('oMorph');
+    const oHarm  = document.getElementById('oHarm');
+    const oVerb  = document.getElementById('oVerb');
+
+    function updateMorph(v) {
+      // map 0..200 → 0..1, equal‑power crossfade to keep loudness steady
+      const x = Math.max(0, Math.min(1, v / 200));
+      const sine = Math.sin(0.5 * Math.PI * x);
+      const saw  = Math.cos(0.5 * Math.PI * x);
+      if (gainSine && gainSaw) {
+        const t = ctx.currentTime;
+        gainSine.gain.setTargetAtTime(sine, t, 0.01);
+        gainSaw.gain.setTargetAtTime(saw,  t, 0.01);
+      }
+      oMorph.textContent = (x * 100).toFixed(0) + '%';
+    }
+
+    function updateHarmonics(v) {
+      // 0..200 → 0..10 harmonics
+      const n = Math.round((v / 200) * NUM_HARMONICS_MAX);
+      oHarm.textContent = String(n);
+      if (!harmonicGains.length) return;
+      const t = ctx.currentTime;
+      harmonicGains.forEach((g, i) => {
+        const k = i + 2; // harmonic number (2..)
+        // amplitude ~ 1/k to mimic saw-ish spectrum when fully on
+        const target = (i < n) ? (0.25 / k) : 0.0;
+        g.gain.setTargetAtTime(target, t, 0.02);
+      });
+    }
+
+    function updateReverb(v) {
+      // wet/dry equal‑power mix
+      const x = Math.max(0, Math.min(1, v / 200));
+      const wet = Math.sin(0.5 * Math.PI * x);
+      const dry = Math.cos(0.5 * Math.PI * x);
+      const t = ctx.currentTime;
+      wetGain.gain.setTargetAtTime(wet, t, 0.02);
+      dryGain.gain.setTargetAtTime(dry, t, 0.02);
+      oVerb.textContent = Math.round(x * 100) + '%';
+    }
+
+    // Hook up sliders
+    sMorph.addEventListener('input', e => updateMorph(+e.target.value));
+    sHarm.addEventListener('input',  e => updateHarmonics(+e.target.value));
+    sVerb.addEventListener('input',  e => updateReverb(+e.target.value));
+
+    // Start/Stop
+    document.getElementById('startBtn').addEventListener('click', async () => {
+      if (!ctx) setupGraph();
+      if (ctx.state !== 'running') await ctx.resume();
+      // initialize from current slider positions
+      updateMorph(+sMorph.value);
+      updateHarmonics(+sHarm.value);
+      updateReverb(+sVerb.value);
+    });
+
+    document.getElementById('stopBtn').addEventListener('click', async () => {
+      if (ctx && ctx.state === 'running') await ctx.suspend();
+    });
+  </script>
+</body>
 </html>
