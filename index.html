@@ -53,7 +53,7 @@
       <output id="oVerb">0%</output>
     </div>
 
-    <p class="note">Click <strong>Start tone</strong> to begin audio.</p>
+    <p class="note">Tap <strong>Start tone</strong> to begin audio (required on iPhone).</p>
   </main>
 
   <script>
@@ -75,27 +75,26 @@
       src.connect(ctx.destination);
       src.start(0);
       await ctx.resume();
-    } catch (e) {
-      // ignore
-    }
+    } catch (e) { /* no-op */ }
   }
 
   // --- Build the node graph (no oscillators started yet) ---
   function setupGraph() {
     ctx = new (window.AudioContext || window.webkitAudioContext)();
 
-    master  = ctx.createGain(); master.gain.value = 0.25;
+    master  = ctx.createGain(); master.gain.value = 0.25; // overall level
     dryGain = ctx.createGain(); wetGain = ctx.createGain();
-    dryGain.gain.value = 1.0;   wetGain.gain.value = 0.0;
+    dryGain.gain.value = 1.0;   wetGain.gain.value = 0.0;  // start dry
 
     reverb = ctx.createConvolver();
     reverb.buffer = createReverbImpulse(ctx, 2.2, 4.0);
 
-    // these gains will host the morphing sources
+    // gains that host morphing sources
     gainSine = ctx.createGain(); gainSine.gain.value = 0.0;
     gainSaw  = ctx.createGain(); gainSaw.gain.value  = 1.0;
 
-    // Harmonic gains
+    // Harmonic gains (2..N harmonics)
+    harmonicGains = [];
     for (let k = 2; k <= NUM_HARMONICS_MAX + 1; k++) {
       const g = ctx.createGain();
       g.gain.value = 0.0;
@@ -145,7 +144,7 @@
     harmonics.forEach(o => o.start());
   }
 
-  // --- Reverb impulse (same as before) ---
+  // --- Reverb impulse ---
   function createReverbImpulse(context, seconds = 2.0, decay = 3.0) {
     const rate = context.sampleRate;
     const length = Math.max(1, Math.floor(seconds * rate));
@@ -160,7 +159,7 @@
     return impulse;
   }
 
-  // ====== UI wiring & parameter updates (unchanged logic) ======
+  // ====== UI wiring & parameter updates ======
   const sMorph = document.getElementById('sMorph');
   const sHarm  = document.getElementById('sHarm');
   const sVerb  = document.getElementById('sVerb');
@@ -187,7 +186,7 @@
     const t = ctx.currentTime;
     harmonicGains.forEach((g, i) => {
       const k = i + 2;
-      const target = (i < n) ? (0.25 / k) : 0.0;
+      const target = (i < n) ? (0.25 / k) : 0.0; // 1/k rolloff
       g.gain.setTargetAtTime(target, t, 0.02);
     });
   }
@@ -208,10 +207,9 @@
 
   const start = async () => {
     if (!ctx) setupGraph();
-    await unlockAudio();          // <- important on iOS
+    await unlockAudio();
     if (ctx.state !== 'running') await ctx.resume();
-    startSourcesIfNeeded();       // <- start oscillators now that audio is running
-    // sync params to current sliders
+    startSourcesIfNeeded();
     updateMorph(+sMorph.value);
     updateHarmonics(+sHarm.value);
     updateReverb(+sVerb.value);
@@ -228,6 +226,37 @@
   startBtn.addEventListener('touchstart', (e) => { e.preventDefault(); start(); }, {passive:false});
   stopBtn.addEventListener('click', stop);
   stopBtn.addEventListener('touchstart', (e) => { e.preventDefault(); stop(); }, {passive:false});
-</script>
+
+  // ====== iOS resilience extras ======
+  // 1) one-time global unlock on first interaction (tap/press/key)
+  let unlocked = false;
+  function oneTimeUnlock() {
+    if (unlocked) return;
+    unlocked = true;
+    if (!ctx) setupGraph();
+    unlockAudio().then(async () => {
+      if (ctx.state !== 'running') { try { await ctx.resume(); } catch {}
+      }
+      startSourcesIfNeeded();
+      updateMorph(+sMorph.value);
+      updateHarmonics(+sHarm.value);
+      updateReverb(+sVerb.value);
+    });
+    ['touchstart','mousedown','keydown'].forEach(ev =>
+      document.removeEventListener(ev, oneTimeUnlock, {passive:false})
+    );
+  }
+  ['touchstart','mousedown','keydown'].forEach(ev =>
+    document.addEventListener(ev, oneTimeUnlock, {passive:false})
+  );
+
+  // 2) auto-resume when returning to tab (Safari sometimes suspends contexts)
+  document.addEventListener('visibilitychange', async () => {
+    if (!ctx) return;
+    if (document.visibilityState === 'visible' && ctx.state !== 'running') {
+      try { await ctx.resume(); } catch {}
+    }
+  });
+  </script>
 </body>
 </html>
